@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import s3fs
 import glob
-%matplotlib inline
+#%matplotlib inline
 
 
 

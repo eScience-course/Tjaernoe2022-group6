@@ -5,16 +5,14 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import s3fs
 import glob
+import modules as md
 
+min_lat=65
+max_lat=90
+min_lon=16
+max_lon=68
 
+model='NorESM2-LM'
+area=md.get_areacello(model,min_lat,max_lat,min_lon,max_lon)
 
-def regional_average_barent(files_dir):
-    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD",
-                           secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",client_kwargs=dict(endpoint_url="https://rgw.met.no"))
-    remote_files = 's3://'+files_dir
-    remote_files_ls = s3.glob(remote_files)
-    print(len(remote_files_ls))  
-    
-    
-    
-    
+print(area)
