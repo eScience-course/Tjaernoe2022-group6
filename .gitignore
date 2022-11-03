@@ -110,7 +110,13 @@ dmypy.json
 
 # JPEG
 *.jpg
+
+# netcdf
+*.nc
 *.jpeg
 
 # Portable Network Graphics
 *.png
+
+# Netcdf files
+*.nc
