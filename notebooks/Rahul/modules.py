@@ -9,52 +9,62 @@ import s3fs
 import glob
 #%matplotlib inline
 
+#......use 'volcello' for DMS and clos data......##
 
-
-def get_areacello(model,min_lat,max_lat,min_lon,max_lon):
+def get_areacello(model,min_lat,max_lat,min_lon,max_lon,area):
     
     if (model=='NorESM2-LM'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
+                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f1'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
         areacello = areacello.squeeze()
         
-        BSarea = areacello.areacello.where((areacello.latitude>=min_lat) & (areacello.latitude<=max_lat) 
+        BSarea = areacello.get(area).where((areacello.latitude>=min_lat) & (areacello.latitude<=max_lat) 
                                        & (areacello.longitude <= max_lon)  & (areacello.longitude >= min_lon))    
     if (model=='CNRM-ESM2-1'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f2'])
+                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f2'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
         areacello = areacello.squeeze()
         
-        BSarea = areacello.areacello.where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
+        BSarea = areacello.get(area).where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
                                        & (areacello.lon <= max_lon)  & (areacello.lon >= min_lon))
     if (model=='CESM2'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
+                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f1'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
         areacello = areacello.squeeze()
         
-        BSarea = areacello.areacello.where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
+        BSarea = areacello.get(area).where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
                                        & (areacello.lon <= max_lon)  & (areacello.lon >= min_lon))
     return BSarea
 
 
-def regional_average(files_dir,model,min_lat,max_lat,min_lon,max_lon,var):
-
-    cell_area=get_areacello(model,min_lat,max_lat,min_lon,max_lon)
+def regional_average(inp):
+                                                 
+    files_dir= inp[0]
+    model= inp[1]
+    min_lat= inp[2]
+    max_lat= inp[3]
+    min_lon= inp[4]
+    max_lon= inp[5]   
+    var= inp[6]
+    cel_type=  inp[7]                                                 
+    area=cel_type
+    
+    cell_area=get_areacello(model,min_lat,max_lat,min_lon,max_lon,area)
 
     s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
                        secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
