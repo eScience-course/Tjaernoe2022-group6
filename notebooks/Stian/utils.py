@@ -74,5 +74,12 @@ def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
     return _ds.isel(time=slice(last_start, last_stop)).mean(dim='time') - _ds.isel(time=slice(first_start, first_stop)).mean(dim='time')
 
 
-def find_peak_date(_ds):
-    _ds_yearly = _ds.group_by('time.year')
+def find_peak_dates(_ds):
+    startyear = 1850
+    _ds = _ds.groupby('time.year')
+    _ds_dates = [_ds[year].idxmax(dim='time').values[0] for year in _ds.groups.keys()]
+    
+    df = xr.DataArray(_ds_dates).to_dataframe('date')
+    df['dayofyear'] = df['date'].dt.dayofyear
+    df['year'] = df['date'].dt.year
+    return df
