@@ -34,8 +34,13 @@ def get_bucket_data(variable, time_res='monthly', thing='Omon', model='NorESM2-L
     #xrs = Parallel(n_jobs=2)(delayed(create_xr)(file) for file in fileset)
     #data = xr.concat(xrs, dim='time')
     
-    return xr.open_mfdataset(fileset, concat_dim='time', combine='nested', 
-                            chunks={'time':math.ceil((365 * (5 + 10 * (last_n_files - 1)) + 1) / 16)})
+    if last_n_files != 0:
+        return xr.open_mfdataset(fileset, concat_dim='time', combine='nested', 
+                                chunks={'time':math.ceil((365 * (5 + 10 * (last_n_files - 1)) + 1) / 16)})
+    else:
+        return xr.open_mfdataset(fileset, concat_dim='time', combine='nested', 
+                                chunks={'time':math.ceil((365 * (5 + 10 * (17 - 1)) + 1) / 16)})
+        
     
 def get_areacello(model='NorESM2-LM'):
     try:
@@ -68,3 +73,6 @@ def regional_average(data, model='NorESM2-LM', clip_coordinates=[300, 380, 75, 1
 def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
     return _ds.isel(time=slice(last_start, last_stop)).mean(dim='time') - _ds.isel(time=slice(first_start, first_stop)).mean(dim='time')
 
+
+def find_peak_date(_ds):
+    _ds_yearly = _ds.group_by('time.year')
