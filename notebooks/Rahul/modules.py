@@ -11,6 +11,7 @@ import glob
 
 #......use 'volcello' for DMS and clos data......##
 
+
 def get_areacello(model,min_lat,max_lat,min_lon,max_lon,area):
     
     if (model=='NorESM2-LM'):
@@ -75,14 +76,14 @@ def regional_average(inp):
     fileset = [s3.open(file) for file in remote_files]
     ds = xr.open_mfdataset(fileset, combine='by_coords')
     
-    month_length = ds.time.dt.days_in_month
-    weights = month_length.groupby("time.year") / month_length.groupby("time.year").sum()
-    # Test that the sum of the weights for each year is 1.0
-    np.testing.assert_allclose(weights.groupby("time.year").sum().values, np.ones(len(np.unique(ds.time.dt.year))))
+    #month_length = ds.time.dt.days_in_month
+    #weights = month_length.groupby("time.year") / month_length.groupby("time.year").sum()
+    
     # Calculate the weighted average:
-    da = (ds.get(var) * weights).groupby("time.year").sum(dim="time")
-    da = da.isel(year = slice(10,None))
+    
+    da = (ds.get(var)).groupby("time.year").sum(dim="time")
+    #da = da.isel(year = slice(10,None))
     
     BSsst = da.where((da.latitude>=min_lat) & (da.latitude<=max_lat) & (da.longitude <= max_lon)  & (da.longitude >= min_lon))
-    BSsst = (cell_area*BSsst).sum(dim=('i','j'))/cell_area.sum(dim=('i','j'))
+    BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))
     return BSsst
