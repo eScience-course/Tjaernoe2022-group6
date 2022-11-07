@@ -73,7 +73,8 @@ def regional_average(inp):
 
     remote_files = 's3:/'+ files_dir
     remote_files = s3.glob(remote_files)
-    fileset = [s3.open(file) for file in remote_files]
+    from_1950=remote_files[50:]
+    fileset = [s3.open(file) for file in from_1950]
     ds = xr.open_mfdataset(fileset, combine='by_coords')
     
     #month_length = ds.time.dt.days_in_month
@@ -82,8 +83,9 @@ def regional_average(inp):
     # Calculate the weighted average:
     
     da = (ds.get(var)).groupby("time.year").sum(dim="time")
-    #da = da.isel(year = slice(10,None))
+    dss = da#.isel(year = slice(100,None))
     
-    BSsst = da.where((da.latitude>=min_lat) & (da.latitude<=max_lat) & (da.longitude <= max_lon)  & (da.longitude >= min_lon))
+    BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
+                      (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
     BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))
     return BSsst
