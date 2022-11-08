@@ -73,17 +73,48 @@ def regional_average(inp):
 
     remote_files = 's3:/'+ files_dir
     remote_files = s3.glob(remote_files)
-    fileset = [s3.open(file) for file in remote_files]
+    from_1950=remote_files[10:]
+    fileset = [s3.open(file) for file in from_1950]
     ds = xr.open_mfdataset(fileset, combine='by_coords')
     
-    #month_length = ds.time.dt.days_in_month
-    #weights = month_length.groupby("time.year") / month_length.groupby("time.year").sum()
+    av=weighted_temporal_mean(ds, var)
+    dss=av.groupby("time.year").sum(dim='time')
     
-    # Calculate the weighted average:
+    BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
+                      (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
     
-    da = (ds.get(var)).groupby("time.year").sum(dim="time")
-    #da = da.isel(year = slice(10,None))
-    
-    BSsst = da.where((da.latitude>=min_lat) & (da.latitude<=max_lat) & (da.longitude <= max_lon)  & (da.longitude >= min_lon))
-    BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))
+    if var =='chlos':
+       BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))
+    else:
+        BSsst = (cell_area*BSsst).sum(dim=('i','j'))/(cell_area).sum(dim=('i','j'))
     return BSsst
+
+
+def weighted_temporal_mean(ds, var):
+    """
+    weight by days in each month
+    """
+    # Determine the month length
+    month_length = ds.time.dt.days_in_month
+
+    # Calculate the weights
+    wgts = month_length.groupby("time.year") / month_length.groupby("time.year").sum()
+
+    # Make sure the weights in each year add up to 1
+    np.testing.assert_allclose(wgts.groupby("time.year").sum(xr.ALL_DIMS), 1.0)
+
+    # Subset our dataset for our variable
+    obs = ds[var]
+
+    # Setup our masking for nan values
+    cond = obs.isnull()
+    ones = xr.where(cond, 0.0, 1.0)
+
+    # Calculate the numerator
+    obs_sum = (obs * wgts).resample(time="AS").sum(dim="time")
+
+    # Calculate the denominator
+    ones_out = (ones * wgts).resample(time="AS").sum(dim="time")
+
+    # Return the weighted average
+    return obs_sum / ones_out
