@@ -118,3 +118,43 @@ def weighted_temporal_mean(ds, var):
 
     # Return the weighted average
     return obs_sum / ones_out
+
+
+def anomaly (var):
+    
+    ## Put the variable name as stored in the NorESM data. This function will output the anomaly and anomaly/climatology in a list.
+    #anaomaly is calculated as follows:
+         #climatology is calculated usng data from 1950 to 1979
+         #Present day trend is calculated for data from 1980 to 2014
+    
+    if var == 'chlos':
+        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='dmsos':
+        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='emidms':
+        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'siconc':
+        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'tos':
+        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        
+    remote_files = s3.glob(file_dir)
+    x=remote_files[10:]
+    fileset = [s3.open(file) for file in remote_files[10:]]
+
+    da = xr.open_mfdataset(fileset, combine='by_coords')
+    weight= weighted_temporal_mean(da,var)
+
+    aa=weight.groupby("time.year").sum(dim='time')
+
+    now1=aa.isel(year = slice(30,None))  #remove first 30 years
+    now=now1.mean('year')
+
+    clim1= aa.isel(year = slice(None,30))  #remove last 30 years
+    clim=clim1.mean('year')
+
+    fractional_anm=(now-clim)/clim
+    anm= (now-clim)
+    
+    anomaly=[anm,fractional_anm]
+    return anomaly
