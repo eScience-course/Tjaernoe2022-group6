@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 from datetime import datetime
 from ipywidgets import interact, interactive, fixed, interact_manual, widgets
-import cmaps
+import numpy as np
 
 # s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
 #                        client_kwargs=dict(endpoint_url="https://rgw.met.no"))
@@ -19,8 +19,12 @@ import cmaps
 #     return xr.open_dataset(file)
 
 def get_bucket_data(variable, time_res='monthly', thing='Omon', model='NorESM2-LM', experiment='hist', 
-                    member_id='*', period='*', last_n_files=0):
+                    chunks = None, noChunks = True, 
+                    member_id='*', period='*', last_n_files=0, parallel=False):
     
+    if chunks is None and not noChunks:
+        chunks = {'time':math.ceil((365 * (5 + 10 * (17 - 1)) + 1) / 16)}
+        
     s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
                            client_kwargs=dict(endpoint_url="https://rgw.met.no"))
     base_path = 's3://escience2022/Ada/'
@@ -42,10 +46,13 @@ def get_bucket_data(variable, time_res='monthly', thing='Omon', model='NorESM2-L
     
     if last_n_files != 0:
         return xr.open_mfdataset(fileset, concat_dim='time', combine='nested', 
-                                chunks={'time':math.ceil((365 * (5 + 10 * (last_n_files - 1)) + 1) / 16)})
+                                chunks=chunks, 
+                                 parallel=parallel)
     else:
         return xr.open_mfdataset(fileset, concat_dim='time', combine='nested', 
-                                chunks={'time':math.ceil((365 * (5 + 10 * (17 - 1)) + 1) / 16)})
+                                chunks=chunks, 
+                                 parallel=parallel
+                                )
         
     
 def get_areacello(model='NorESM2-LM'):
@@ -65,8 +72,8 @@ def get_areacello(model='NorESM2-LM'):
         areacello.to_netcdf(f'areacello_{model}.nc')
         return areacello
 
-def clip_to_region2(_ds, mini=340, maxi=380, minj=110, maxj=145):
-    return _ds.isel(j=slice(mini, maxi), i=slice(minj, maxj))
+def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145):
+    return _ds.isel(j=slice(minj, maxj), i=slice(mini, maxi))
 
 def shift_longitude(_ds):
     dset = _ds.copy()
@@ -80,17 +87,24 @@ def clip_to_region(_ds, minlon=20, maxlon=60, minlat=70, maxlat=90):
     try:
         # If this works then longitude is called 'lon'
         current_minlon = _ds.lon.values.min()
-        name_lon = 'lon'
+        if current_minlon > -100:
+            _ds = shift_longitude(_ds)
         name_lat = 'lat'
+        name_lon = 'lon'
+        #_ds = _ds.sel(lon=slice(minlon, maxlon))
+        #_ds = _ds.sel(lat=slice(minlat, maxlat))
     except:
         current_minlon = _ds.longitude.values.min()
-        name_lon = 'longitude'
+        if current_minlon > -100:
+            _ds = shift_longitude(_ds)
         name_lat = 'latitude'
+        name_lon = 'longitude'
+        #_ds = _ds.sel(longitude=slice(minlon, maxlon), method='nearest')
+        #_ds = _ds.sel(latitude=slice(minlat, maxlat), method='nearest')
         
-    if current_minlon > -100:
-        _ds = shift_longitude(_ds)
-    return _ds.where((_ds[name_lat] > minlat) & (_ds[name_lat] < maxlat) & (_ds[name_lon] > minlon) & (_ds[name_lon] < maxlon), drop=True)
-
+    _ds = _ds.where((_ds[name_lat] > minlat) & (_ds[name_lat] < maxlat) & (_ds[name_lon] > minlon) & (_ds[name_lon] < maxlon), drop=True)
+    return _ds
+    
 def clip_to_months(_ds, start_month, stop_month):
     return _ds.where(_ds.time.dt.month.isin([i for i in range(start_month, stop_month + 1)]))
     
@@ -132,30 +146,42 @@ def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM'):
 
     peaks[-last_n_years:].plot.scatter(x='year', y='doy_anomaly', color='g', ax=ax)
     a, b = regression(peaks[-last_n_years:], 'year', 'doy_anomaly')
-    ax.plot(peaks['year'][-last_n_years:], a * peaks['year'][-last_n_years:] + b)
+    ax.plot(peaks['year'][-last_n_years:], a * peaks['year'][-last_n_years:] + b, label=f'slope = {round(a, 3)} d/y')
     ax.grid()
     fig.suptitle(f'Peak phytoplankton blooming dates ({source})')
     ax.set_xlabel('Year')
-    ax.set_ylabel('Day of year')
+    ax.set_ylabel('Day of year anomaly')
+    ax.legend(loc='upper right')
     
-def barentsMap():
-    fig = plt.figure(1, figsize=[7,7])
+def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60):
+    fig = plt.figure(1, figsize=[7,5])
     map = plt.subplot(projection=ccrs.NorthPolarStereo(central_longitude=40))
-    map.coastlines(); map.gridlines()
-    map.set_extent([20, 60, 70, 80], crs=ccrs.PlateCarree())
+    map.coastlines(); map.gridlines(draw_labels=True)
+    map.set_extent([minlon, maxlon, minlat, maxlat], crs=ccrs.PlateCarree())
     return fig, map
 
-def slider_map(_da, start, stop, freq='M', name='ESACCI'):
+def slider_map(_da, start, stop, freq='M', name='ESACCI', model=False, color='YlGn', levels=np.linspace(0, 3E-6, 20).round(7), 
+               minlat=70, maxlat=80, minlon=20, maxlon=60):
+    if freq == 'M':
+        timeformat = '%Y-%m'
+    elif freq == 'D':
+        timeformat = '%Y-%m-%d'
     def plot_map(date):
-        fig, map = barentsMap()
-        cmap = plt.get_cmap('YlGn')
+        fig, map = barentsMap(minlat=minlat, maxlat=maxlat, minlon=minlon, maxlon=maxlon)
+        cmap = plt.get_cmap(color)
+        if model:
+            _da.sel(time=date.strftime(timeformat)).plot(ax=map, x='longitude', y='latitude', transform=ccrs.PlateCarree(), 
+                                                       cmap=cmap, robust=True, levels=levels, cbar_kwargs={'location': 'bottom'})
+            datestr = date.strftime(timeformat) 
+        else:
+            _da.sel(time=date, method='bfill').plot(ax=map, transform=ccrs.PlateCarree(), cmap=cmap, robust=True, 
+                                                    cbar_kwargs={'spacing': 'proportional'})
 
-        _da.sel(time=date, method='bfill').plot(ax=map, transform=ccrs.PlateCarree(), cmap=cmap, robust=True)
-        datestr = date.strftime('%Y-%m') 
+            datestr = date.strftime(timeformat) 
         map.set_title(f'{name} - {datestr}\n')
     
     dates = pd.date_range(start, stop, freq=freq)
-    options = [(date.strftime('%Y-%m'), date) for date in dates]
+    options = [(date.strftime(timeformat), date) for date in dates]
     index = (0, len(options) - 1)
     date_slider = widgets.SelectionSlider(
                     options=options,
