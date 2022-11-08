@@ -93,7 +93,7 @@ def get_areacello(model='NorESM2-LM'):
         areacello.to_netcdf(f'areacello_{model}.nc')
         return areacello
 
-def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145):
+def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145, model='NorESM2'):
     '''
         Clip dataset to a specific region by model indices
     Args:
@@ -105,7 +105,10 @@ def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145):
     Returns:
         clip      [DataSet]  : Clipped Xarray.DataSet or DataArray
     '''
-    clip = _ds.isel(j=slice(minj, maxj), i=slice(mini, maxi))
+    if model == 'NorESM2':
+        clip = _ds.isel(j=slice(minj, maxj), i=slice(mini, maxi))
+    elif model == 'CESM2':
+        clip = _ds.isel(nlon=slice(mini, maxi), nlat=slice(minj, maxj))
     return clip
 
 def clip_to_region(_ds, minlon=20, maxlon=60, minlat=70, maxlat=90):
