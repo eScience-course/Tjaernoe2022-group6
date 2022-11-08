@@ -1,13 +1,10 @@
-import xarray as xr, pandas as pd
-import s3fs, intake, cftime, math, time
-from joblib import Parallel, delayed
-import statsmodels.formula.api as sm
-import numba
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-from datetime import datetime
-from ipywidgets import interact, interactive, fixed, interact_manual, widgets
-import numpy as np
+import xarray as xr, pandas as pd, numpy as np, math, time   # For data handling
+import s3fs, intake, cftime                                  # For reading bucket data
+import matplotlib.pyplot as plt, cartopy.crs as ccrs         # For plotting
+import statsmodels.formula.api as sm                         # For regression
+from joblib import Parallel, delayed                         # For parallizing
+from datetime import datetime                                # For time computations
+from ipywidgets import interact, interactive, fixed, widgets # For interactive plotting
 
 # s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
 #                        client_kwargs=dict(endpoint_url="https://rgw.met.no"))
