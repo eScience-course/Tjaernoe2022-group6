@@ -84,11 +84,12 @@ def regional_average(inp):
                       (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
     
     if var =='chlos':
-       BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))
+       BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))  #check if it is correct?
+    if var =='dmsos':
+       BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))  #check if it is correct?
     else:
         BSsst = (cell_area*BSsst).sum(dim=('i','j'))/(cell_area).sum(dim=('i','j'))
     return BSsst
-
 
 def weighted_temporal_mean(ds, var):
     """
@@ -108,13 +109,13 @@ def weighted_temporal_mean(ds, var):
 
     # Setup our masking for nan values
     cond = obs.isnull()
-    ones = xr.where(cond, 0.0, 1.0)
+    ones = xr.where(cond, 0, 1.0)
 
     # Calculate the numerator
-    obs_sum = (obs * wgts).resample(time="AS").sum(dim="time")
+    obs_sum = (obs * wgts).groupby("time.year").sum(dim="time")
 
     # Calculate the denominator
-    ones_out = (ones * wgts).resample(time="AS").sum(dim="time")
+    ones_out = (ones*wgts).groupby("time.year").sum(dim="time")
 
     # Return the weighted average
     return obs_sum / ones_out
@@ -126,7 +127,10 @@ def anomaly (var):
     #anaomaly is calculated as follows:
          #climatology is calculated usng data from 1950 to 1979
          #Present day trend is calculated for data from 1980 to 2014
-    
+    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
+                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
+
+
     if var == 'chlos':
         file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
     if var=='dmsos':
@@ -144,8 +148,8 @@ def anomaly (var):
 
     da = xr.open_mfdataset(fileset, combine='by_coords')
     weight= weighted_temporal_mean(da,var)
-
-    aa=weight.groupby("time.year").sum(dim='time')
+    
+    aa=weight#.groupby("time.year").sum(dim='time')
 
     now1=aa.isel(year = slice(30,None))  #remove first 30 years
     now=now1.mean('year')
@@ -158,3 +162,25 @@ def anomaly (var):
     
     anomaly=[anm,fractional_anm]
     return anomaly
+
+def check_data(n,var):
+    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
+                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
+
+
+    if var == 'chlos':
+        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='dmsos':
+        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='emidms':
+        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'siconc':
+        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'tos':
+        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        
+    remote_files = s3.glob(file_dir)
+    fileset = [s3.open(file) for file in remote_files[n:]]
+    da = xr.open_mfdataset(fileset, combine='by_coords')
+    
+    return da

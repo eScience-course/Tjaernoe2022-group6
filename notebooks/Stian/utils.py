@@ -1,13 +1,10 @@
-import xarray as xr, pandas as pd
-import s3fs, intake, cftime, math, time
-from joblib import Parallel, delayed
-import statsmodels.formula.api as sm
-import numba
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-from datetime import datetime
-from ipywidgets import interact, interactive, fixed, interact_manual, widgets
-import numpy as np
+import xarray as xr, pandas as pd, numpy as np, math, time   # For data handling
+import s3fs, intake, cftime                                  # For reading bucket data
+import matplotlib.pyplot as plt, cartopy.crs as ccrs         # For plotting
+import statsmodels.formula.api as sm                         # For regression
+from joblib import Parallel, delayed                         # For parallizing
+from datetime import datetime                                # For time computations
+from ipywidgets import interact, interactive, fixed, widgets # For interactive plotting
 
 # s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
 #                        client_kwargs=dict(endpoint_url="https://rgw.met.no"))
@@ -93,7 +90,7 @@ def get_areacello(model='NorESM2-LM'):
         areacello.to_netcdf(f'areacello_{model}.nc')
         return areacello
 
-def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145):
+def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145, model='NorESM2'):
     '''
         Clip dataset to a specific region by model indices
     Args:
@@ -105,7 +102,10 @@ def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145):
     Returns:
         clip      [DataSet]  : Clipped Xarray.DataSet or DataArray
     '''
-    clip = _ds.isel(j=slice(minj, maxj), i=slice(mini, maxi))
+    if model == 'NorESM2':
+        clip = _ds.isel(j=slice(minj, maxj), i=slice(mini, maxi))
+    elif model == 'CESM2':
+        clip = _ds.isel(nlon=slice(mini, maxi), nlat=slice(minj, maxj))
     return clip
 
 def clip_to_region(_ds, minlon=20, maxlon=60, minlat=70, maxlat=90):
