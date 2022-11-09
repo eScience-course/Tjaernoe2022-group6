@@ -1,10 +1,10 @@
 import xarray as xr, pandas as pd, numpy as np, math, time   # For data handling
-import s3fs, intake, cftime                                  # For reading bucket data
 import matplotlib.pyplot as plt, cartopy.crs as ccrs         # For plotting
 import statsmodels.formula.api as sm                         # For regression
 from joblib import Parallel, delayed                         # For parallizing
 from datetime import datetime                                # For time computations
 from ipywidgets import interact, interactive, fixed, widgets # For interactive plotting
+import intake
 
 # s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
 #                        client_kwargs=dict(endpoint_url="https://rgw.met.no"))
@@ -15,8 +15,9 @@ from ipywidgets import interact, interactive, fixed, widgets # For interactive p
 # def create_xr(file):
 #     return xr.open_dataset(file)
 
-def get_bucket_data(variable, time_res='monthly', model='NorESM2-LM', experiment='hist', 
-                    member_id='*', period='*', chunks=None, noChunks=True, last_n_files=0, parallel=False):
+def get_bucket_data(variable='chlos', time_res='monthly', model='NorESM2-LM', experiment='hist', 
+                    member_id='*', period='*', chunks=None, noChunks=True, last_n_files=0, 
+                    parallel=False, filepath=None):
     '''
         Import model data from the s3 storage bucket. 
     Args:
@@ -29,43 +30,47 @@ def get_bucket_data(variable, time_res='monthly', model='NorESM2-LM', experiment
         chunks       [int]     :  Number of timesteps for each chunk if data should be chunked
         noChunks     [bool]    :  Whether to chunk the dask array or not
         last_n_files [int]     :  Number of captured files to read counting from last, default is all
+        filepath     [str]     :  Path to file on s3 for simple read instead
     Returns:
         dS           [DataSet] :  xarray.DataSet of the collected data
     '''
     
-    if chunks is None and not noChunks:
-        chunks = {'time': chunks}#math.ceil((365 * (5 + 10 * (17 - 1)) + 1) / 16)}
-        
     s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0",
-                           client_kwargs=dict(endpoint_url="https://rgw.met.no"))
+                               client_kwargs=dict(endpoint_url="https://rgw.met.no"))
     base_path = 's3://escience2022/Ada/'
-    if time_res == 'monthly':
-        name = 'Omon'
-    else:
-        name = 'Oday'
-    if member_id == period:
-        full_path = base_path + f'{time_res}/{variable}_{name}_{model}_{experiment}_*.nc'
-    else:
-        full_path = base_path + f'{time_res}/{variable}_{name}_{model}_{experiment}_{member_id}_{period}.nc'
     
-    print('Request: ' + full_path)
+    if chunks is None and not noChunks:
+        chunks = {'time': chunks} #math.ceil((365 * (5 + 10 * (17 - 1)) + 1) / 16)}
     
-    remote_files = s3.glob(full_path)
-    
-    fileset = [s3.open(file) for file in remote_files[-last_n_files:]]
-    
-    # fileset = Parallel(n_jobs=2)(delayed(read_file)(file) for file in remote_files[-last_n_files:])
+    if filepath is None:
+        if time_res == 'monthly':
+            name = 'Omon'
+        else:
+            name = 'Oday'
+        if member_id == period:
+            full_path = base_path + f'{time_res}/{variable}_{name}_{model}_{experiment}_*.nc'
+        else:
+            full_path = base_path + f'{time_res}/{variable}_{name}_{model}_{experiment}_{member_id}_{period}.nc'
 
-    #xrs = Parallel(n_jobs=2)(delayed(create_xr)(file) for file in fileset)
-    #data = xr.concat(xrs, dim='time')
-    
-    if last_n_files != 0:
-        dS = xr.open_mfdataset(fileset, concat_dim='time', combine='nested', chunks=chunks, parallel=parallel)
+        print('Request: ' + full_path)
     else:
-        dS = xr.open_mfdataset(fileset, concat_dim='time', combine='nested', chunks=chunks, parallel=parallel)
-    return dS
-        
-    
+        full_path = base_path + filepath
+        remote_files = s3.glob(full_path)
+
+        fileset = [s3.open(file) for file in remote_files[-last_n_files:]]
+
+        # fileset = Parallel(n_jobs=2)(delayed(read_file)(file) for file in remote_files[-last_n_files:])
+
+        #xrs = Parallel(n_jobs=2)(delayed(create_xr)(file) for file in fileset)
+        #data = xr.concat(xrs, dim='time')
+
+        if last_n_files != 0:
+            dS = xr.open_mfdataset(fileset, concat_dim='time', combine='nested', chunks=chunks, parallel=parallel)
+        else:
+            dS = xr.open_mfdataset(fileset, concat_dim='time', combine='nested', chunks=chunks, parallel=parallel)
+        return dS
+
+
 def get_areacello(model='NorESM2-LM'):
     '''
         Downloads or reads ocean gridcell area data for the desired model
@@ -75,20 +80,19 @@ def get_areacello(model='NorESM2-LM'):
         areacello [DataSet] :  xarray.DataArray of model ocean grid cell area
     '''
     try:
-        areacello = xr.open_dataset(f'areacello_{model}.nc').areacello
+        areacello = consistent_naming(xr.open_dataset(f'areacello_{model}.nc'))
         print('Found local areacello NetCDF')
-        return areacello
     except:
         print('Areacello not stored locally. Getting from cloud...')
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
-        cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], table_id=['Ofx'], 
-                         variable_id=['areacello'], member_id=['r1i1p1f1'])
+        cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
+                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
         area = ds_dict[list(ds_dict.keys())[0]]
-        areacello = area.areacello
+        areacello = consistent_naming(area)
         areacello.to_netcdf(f'areacello_{model}.nc')
-        return areacello
+    return areacello.areacello.squeeze()
 
 def clip_to_region2(_ds, minj=340, maxj=380, mini=110, maxi=145, model='NorESM2'):
     '''
@@ -138,7 +142,11 @@ def clip_to_region(_ds, minlon=20, maxlon=60, minlat=70, maxlat=90):
         #_ds = _ds.sel(longitude=slice(minlon, maxlon), method='nearest')
         #_ds = _ds.sel(latitude=slice(minlat, maxlat), method='nearest')
         
-    clip = _ds.where((_ds[name_lat] > minlat) & (_ds[name_lat] < maxlat) & (_ds[name_lon] > minlon) & (_ds[name_lon] < maxlon), drop=True)
+    clip = _ds.where((_ds[name_lat] > minlat) & 
+                     (_ds[name_lat] < maxlat) & 
+                     (_ds[name_lon] > minlon) & 
+                     (_ds[name_lon] < maxlon), 
+                     drop=True)
     return clip
 
     
@@ -179,9 +187,8 @@ def regional_average(data, model='NorESM2-LM', clip_coords=[20, 60, 70, 90]):
     Returns:
         mean        [DataSet]   : Xarray.DataSet or DataArray, with 2 less dimensions than input
     '''
-    area = clip_to_region(get_areacello(model), *clip_coords)
+    area = clip_to_region(get_areacello(model), *clip_coords).squeeze()
     mean = (data*area).sum(dim=('i','j'))/area.sum(dim=('i','j'))
-    #return data.weighted(area.fillna(0)).mean()
     return mean
 
 def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
@@ -200,14 +207,31 @@ def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
     return anomaly
 
 
-def find_peak_dates2(_ds):
-    _ds = _ds.groupby('time.year')
-    _ds_dates = [_ds[year].idxmax(dim='time').values[0] for year in _ds.groups.keys()]
-    df = xr.DataArray(_ds_dates).to_dataframe('date')
-    df['dayofyear'] = df['date'].dt.dayofyear
-    return df
-
 def find_peak_dates(_da):
+    '''
+        Compute the dates each year of input where the variable peaks
+    Args:
+        _ds       [DataSet]   : Xarray.DataArray of variable data
+    Returns:
+        df        [DataFrame] : Pandas.DataFrame containing doy of the peaks each year  
+    '''
+    _dat = _da.copy()
+    startyear, stopyear = _dat.isel(time=0).time.dt.year.values, _dat.isel(time=-1).time.dt.year.values
+    _dat['time']  = _dat.time.to_dataframe().index.to_datetimeindex()
+    _dat_grouped = _dat.groupby('time.year')
+    _ds_dates = [_dat_grouped[year].idxmax(dim='time').values for year in _dat_grouped.groups.keys()]
+    shape = np.shape(_ds_dates)
+    df = xr.DataArray(_ds_dates).to_dataframe('date')
+    df['dayofyear'] = pd.to_datetime(df['date']).dt.dayofyear
+    df['year'] = pd.to_datetime(df['date']).dt.year
+    
+    _xrds = xr.DataArray(df['dayofyear'].values.reshape(shape), dims=['time', 'j', 'i'], 
+                  coords=dict(longitude=(["j", "i"], _dat.lon.values), 
+                              latitude=(["j", "i"], _dat.lat.values), 
+                              time=np.arange(startyear, stopyear+1)))
+    return _xrds
+
+def find_peak_dates2(_da):
     '''
         Compute the dates each year of input where the variable peaks
     Args:
@@ -238,7 +262,7 @@ def regression(data, x, y, summary=False):
         summary  [str]        : If 'summary' is True, return a summary for the OLS
     '''
     reg = sm.ols(formula=f'{y} ~ {x}', data=data).fit()
-    print(reg.summary)
+    #print(reg.summary)
     b, a = reg.params
     if summary == True:
         summary = reg.summary()
@@ -246,7 +270,7 @@ def regression(data, x, y, summary=False):
     else:
         return a, b
 
-def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM'):
+def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM', ax=None, return_ax=False, reg_summary=False, color='#3C5C1B', anomaly=True):
     '''
         Create a scatter plot of the peak dates.
     Args:
@@ -254,19 +278,59 @@ def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM'):
         last_n_years  [int]        : Number of years to plot for, counting from last. Default is 30.
         source        [str]        : Name of the data source to use for plot title
     '''
-    fig, ax = plt.subplots(figsize=(12,4))
-    peaks['doy_anomaly'] = peaks['dayofyear'] - peaks['dayofyear'].mean()
-
-    peaks[-last_n_years:].plot.scatter(x='year', y='doy_anomaly', color='g', ax=ax)
-    a, b = regression(peaks[-last_n_years:], 'year', 'doy_anomaly')
-    ax.plot(peaks['year'][-last_n_years:], a * peaks['year'][-last_n_years:] + b, label=f'slope = {round(a, 3)} d/y')
-    ax.grid()
-    fig.suptitle(f'Peak phytoplankton blooming dates ({source})')
-    ax.set_xlabel('Year')
-    ax.set_ylabel('Day of year anomaly')
-    ax.legend(loc='upper right')
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12,4))
     
-def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60):
+    if anomaly:
+        ylabel = 'Day of Year (Anomaly)'
+        to_plot = peaks - peaks.mean()
+    else:
+        ylabel = 'Day of Year'
+        to_plot = peaks
+
+    ax.scatter(to_plot.time[-last_n_years:], to_plot.values[-last_n_years:], color=color, alpha=0.7, s=3)
+    
+    _df = pd.DataFrame({'doy_anomaly': to_plot, 'year': to_plot.time})
+    
+    # Do regression
+    if reg_summary:
+        a, b, summary = regression(_df[-last_n_years:], 'year', 'doy_anomaly', summary=True)
+    else:
+        a, b = regression(_df[-last_n_years:], 'year', 'doy_anomaly')
+        
+    ax.plot(_df['year'][-last_n_years:], a * _df['year'][-last_n_years:] + b, 
+            label=f'Trend: {round(a, 3)} d/y', linestyle='--', color=color)
+    
+    #Rolling mean
+    mean5 = to_plot.rolling(time=5, center=True, min_periods=3).mean()
+    mean10 = to_plot.rolling(time=10, center=True, min_periods=7).mean()
+    ax.plot(_df['year'][-last_n_years:],  mean5.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
+    ax.plot(_df['year'][-last_n_years:],  mean10.values[-last_n_years:], label=f'10-year mean', color=color, linewidth=3)
+    
+    #Variance
+    std10 = to_plot.rolling(time=10, center=True, min_periods=7).std()
+    
+    ax.fill_between(_df['year'][-last_n_years:],  
+                    mean10.values[-last_n_years:] - std10.values[-last_n_years:], 
+                    mean10.values[-last_n_years:] + std10.values[-last_n_years:], 
+                    label=f'Std', color=color, linewidth=1, alpha=0.3)
+    #ax.plot(_df['year'][-last_n_years:],  min10.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
+    #ax.plot(_df['year'][-last_n_years:],  max10.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
+    
+    ax.grid()
+    ax.set_title(f'Barents sea: Peak phytoplankton blooming ({source})')
+    ax.set_xlabel('Year')
+    ax.set_ylabel(f'Peak chlorophyll date [{ylabel}]')
+    ax.legend(loc='upper right')
+    if return_ax or reg_summary:
+        to_return = []
+        if return_ax:
+            to_return.append(fig, ax)
+        if reg_summary:
+            to_return.append(summary)
+            return to_return
+        
+def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60, nrows=1, ncols=1):
     '''
         Create a cartopy map instance for a specific region.
     Args:
@@ -278,11 +342,15 @@ def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60):
         fig        [Figure] : Matplotlib.pyplot.Figure instance
         map        [Axes]   : Matplotlib.pyplot.Axes instance with given cartopy projection
     '''
-    fig = plt.figure(1, figsize=[7,5])
-    map = plt.subplot(projection=ccrs.NorthPolarStereo(central_longitude=40))
-    map.coastlines(); map.gridlines(draw_labels=True)
-    map.set_extent([minlon, maxlon, minlat, maxlat], crs=ccrs.PlateCarree())
-    return fig, map
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=[7,5], projection=ccrs.NorthPolarStereo(central_longitude=40))
+    try:
+        for ax in axs:
+            ax.coastlines(); ax.gridlines(draw_labels=True)
+            ax.set_extent([minlon, maxlon, minlat, maxlat], crs=ccrs.PlateCarree())
+    except:
+        axs.coastlines(); axs.gridlines(draw_labels=True)
+        axs.set_extent([minlon, maxlon, minlat, maxlat], crs=ccrs.PlateCarree())
+    return fig, axs
 
 def slider_map(_da, start, stop, freq='M', name='ESACCI', model=False, color='YlGn', levels=np.linspace(0, 3E-6, 20).round(7), 
                minlat=70, maxlat=80, minlon=20, maxlon=60):
@@ -313,11 +381,18 @@ def slider_map(_da, start, stop, freq='M', name='ESACCI', model=False, color='Yl
         Args:
             date   [Datetime]  : Datetime.Datetime instance to plot the data at
         '''
-        fig, map = barentsMap(minlat=minlat, maxlat=maxlat, minlon=minlon, maxlon=maxlon)
+        fig, map = barentsMap(minlat=minlat, 
+                              maxlat=maxlat, 
+                              minlon=minlon, 
+                              maxlon=maxlon)
         cmap = plt.get_cmap(color)
         if model:
-            _da.sel(time=date.strftime(timeformat)).plot(ax=map, x='longitude', y='latitude', transform=ccrs.PlateCarree(), 
-                                                       cmap=cmap, robust=True, levels=levels, cbar_kwargs={'location': 'bottom'})
+            try:
+                _da.sel(time=date.strftime(timeformat)).plot(ax=map, x='lon', y='lat', transform=ccrs.PlateCarree(), 
+                                                           cmap=cmap, robust=True, levels=levels, cbar_kwargs={'location': 'bottom'})
+            except:
+                _da.sel(time=date.strftime(timeformat)).plot(ax=map, x='lon', y='lat', transform=ccrs.PlateCarree(), 
+                                                           cmap=cmap, robust=True, levels=levels, cbar_kwargs={'location': 'bottom'})
             datestr = date.strftime(timeformat) 
         else:
             _da.sel(time=date, method='bfill').plot(ax=map, transform=ccrs.PlateCarree(), cmap=cmap, robust=True, 
@@ -335,3 +410,67 @@ def slider_map(_da, start, stop, freq='M', name='ESACCI', model=False, color='Yl
                     layout={'width': '800px'}
                 )
     interact(plot_map, date=date_slider)
+
+def consistent_naming(ds):
+    """
+    Author @Ada Gjermundsen
+    The naming convention for coordinates and dimensions are not the same 
+    for noresm raw output and cmorized variables. This function rewrites the 
+    coords and dims names to be consistent and the functions thus work on all
+    Choose the cmor naming convention.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset 
+
+    Returns
+    -------
+    ds : xarray.Dataset
+
+    """
+    if "latitude" in ds.coords and "lat" not in ds.coords:
+        ds = ds.rename({"latitude": "lat"})
+    if "longitude" in ds.coords and "lon" not in ds.coords:
+        ds = ds.rename({"longitude": "lon"})
+    if "region" in ds.dims:
+        ds = ds.rename(
+            {"region": "basin"}
+        )  # are we sure that it is the dimension and not the variable which is renamed? Probably both
+        # note in BLOM raw, region is both a dimension and a variable. Not sure how xarray handles that
+        # in cmorized variables sector is the char variable with the basin names, and basin is the dimension
+        # don't do this -> ds = ds.rename({'region':'sector'})
+    if "x" in ds.dims:
+        ds = ds.rename({"x": "i"})
+    if "y" in ds.dims:
+        ds = ds.rename({"y": "j"})
+    if "ni" in ds.dims:
+        ds = ds.rename({"ni": "i"})
+    if "nj" in ds.dims:
+        ds = ds.rename({"nj": "j"})
+    if "nlat" in ds.dims:
+        ds = ds.rename({"nlat": "j"})
+    if "nlon" in ds.dims:
+        ds = ds.rename({"nlon": "i"})
+    if "nlat" in ds.coords:
+        ds = ds.rename({"nlat": "j"})
+    if "nlon" in ds.coords:
+        ds = ds.rename({"nlon": "i"})
+    if "depth" in ds.dims:
+        ds = ds.rename({"depth": "lev"})
+    if "nbnd" in ds.dims:
+        ds = ds.rename({"nbnd": "bnds"})
+    if "nbounds" in ds.dims:
+        ds = ds.rename({"nbounds": "bnds"})
+    if "bounds" in ds.dims:
+        ds = ds.rename({"bounds": "bnds"})
+    if "type" in ds.coords:
+        ds = ds.drop("type")
+    if 'latitude_bnds' in ds.variables:
+        ds = ds.rename({'latitude_bnds':'lat_bnds'})
+    if 'longitude_bnds' in ds.variables:
+        ds = ds.rename({'longitude_bnds':'lon_bnds'})
+    if 'nav_lat' in ds.coords:
+        ds = ds.rename({'nav_lon':'lon','nav_lat':'lat'})
+    if 'bounds_nav_lat' in ds.variables:
+        ds = ds.rename({'bounds_nav_lat':'vertices_latitude','bounds_nav_lon':'vertices_longitude'})
+    return ds
