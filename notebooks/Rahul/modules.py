@@ -78,7 +78,7 @@ def regional_average(inp):
     ds = xr.open_mfdataset(fileset, combine='by_coords')
     
     av=weighted_temporal_mean(ds, var)
-    dss=av.groupby("time.year").sum(dim='time')
+    dss=av#.groupby("time.year").sum(dim='time')
     
     BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
                       (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
@@ -91,7 +91,7 @@ def regional_average(inp):
         BSsst = (cell_area*BSsst).sum(dim=('i','j'))/(cell_area).sum(dim=('i','j'))
     return BSsst
 
-def weighted_temporal_mean(ds, var):
+def weighted_yearly_mean(ds, var):
     """
     weight by days in each month
     """
@@ -121,6 +121,57 @@ def weighted_temporal_mean(ds, var):
     return obs_sum / ones_out
 
 
+def weighted_seasonal_mean(var):
+    
+    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
+                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
+
+
+    if var == 'chlos':
+        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='dmsos':
+        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='emidms':
+        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'siconc':
+        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'tos':
+        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        
+    remote_files = s3.glob(file_dir)
+    fileset = [s3.open(file) for file in remote_files[10:]]
+
+    ds = xr.open_mfdataset(fileset, combine='by_coords')
+    
+    """
+    weight by days in each month
+    """
+    # Determine the month length
+    month_length = ds.time.dt.days_in_month
+
+    # Calculate the weights
+    wgts = month_length.groupby("time.season") / month_length.groupby("time.season").sum()
+
+    # Make sure the weights in each year add up to 1
+    np.testing.assert_allclose(wgts.groupby("time.season").sum(xr.ALL_DIMS), 1.0)
+
+    # Subset our dataset for our variable
+    obs = ds[var]
+
+    # Setup our masking for nan values
+    cond = obs.isnull()
+    ones = xr.where(cond, 0, 1.0)
+
+    # Calculate the numerator
+    obs_sum = (obs * wgts).groupby("time.season").sum(dim="time")
+
+    # Calculate the denominator
+    ones_out = (ones*wgts).groupby("time.season").sum(dim="time")
+
+    # Return the weighted average
+    return (obs_sum/ ones_out).to_dataset(name = var)
+
+
 def anomaly (var):
     
     ## Put the variable name as stored in the NorESM data. This function will output the anomaly and anomaly/climatology in a list.
@@ -143,7 +194,7 @@ def anomaly (var):
         file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
         
     remote_files = s3.glob(file_dir)
-    x=remote_files[10:]
+
     fileset = [s3.open(file) for file in remote_files[10:]]
 
     da = xr.open_mfdataset(fileset, combine='by_coords')
