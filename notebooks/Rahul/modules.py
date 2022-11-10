@@ -11,6 +11,27 @@ import glob
 
 #......use 'volcello' for DMS and clos data......##
 
+def open_file(var):
+    
+    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
+                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
+
+
+    if var == 'chlos':
+        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='dmsos':
+        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var=='emidms':
+        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'siconc':
+        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if var == 'tos':
+        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        
+    remote_files = s3.glob(file_dir)
+    fileset = [s3.open(file) for file in remote_files[10:]]
+    
+    return fileset
 
 def get_areacello(model,min_lat,max_lat,min_lon,max_lon,area):
     
@@ -52,6 +73,20 @@ def get_areacello(model,min_lat,max_lat,min_lon,max_lon,area):
                                        & (areacello.lon <= max_lon)  & (areacello.lon >= min_lon))
     return BSarea
 
+def get_polar_region(ds):
+    
+    cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
+    col = intake.open_esm_datastore(cat_url)
+    cat = col.search(source_id=['NorESM2-LM'], activity_id = ['CMIP'], experiment_id=['piControl'], 
+                     table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
+    ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
+    areacello = ds_dict[list(ds_dict.keys())[0]]
+    areacello = areacello.squeeze()
+    areacello = areacello.where(areacello.latitude>60, drop = True)
+    da=ds.sel(i=areacello.i).sel(j=areacello.j)
+    
+    return da
+    
 
 def regional_average(inp):
                                                  
@@ -65,20 +100,13 @@ def regional_average(inp):
     cel_type=  inp[7]                                                 
     area=cel_type
     
-    cell_area=get_areacello(model,min_lat,max_lat,min_lon,max_lon,area)
-
-    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
-                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
-
-
-    remote_files = 's3:/'+ files_dir
-    remote_files = s3.glob(remote_files)
-    from_1950=remote_files[10:]
-    fileset = [s3.open(file) for file in from_1950]
-    ds = xr.open_mfdataset(fileset, combine='by_coords')
+    cell_area=get_areacello(model,min_lat,max_lat,min_lon,max_lon,area)  #get cell area
     
-    av=weighted_temporal_mean(ds, var)
-    dss=av#.groupby("time.year").sum(dim='time')
+    fileset=open_file(var)                                               #get a list of files to open
+    da = xr.open_mfdataset(fileset, combine='by_coords')
+    ds= get_polar_region(da)
+    
+    dss=weighted_yearly_mean(ds, var)
     
     BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
                       (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
@@ -105,6 +133,8 @@ def weighted_yearly_mean(ds, var):
     np.testing.assert_allclose(wgts.groupby("time.year").sum(xr.ALL_DIMS), 1.0)
 
     # Subset our dataset for our variable
+    ds= get_polar_region(ds)
+    
     obs = ds[var]
 
     # Setup our masking for nan values
@@ -121,27 +151,12 @@ def weighted_yearly_mean(ds, var):
     return obs_sum / ones_out
 
 
-def weighted_seasonal_mean(var):
+def weighted_seasonal_mean(var):  #to calculate mean of a particular season. The output is the mean of each season separately over a period of time.
     
-    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
-                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
-
-
-    if var == 'chlos':
-        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='dmsos':
-        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='emidms':
-        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'siconc':
-        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'tos':
-        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-        
-    remote_files = s3.glob(file_dir)
-    fileset = [s3.open(file) for file in remote_files[10:]]
+    fileset=open_file(var)
 
     ds = xr.open_mfdataset(fileset, combine='by_coords')
+    ds= get_polar_region(ds)
     
     """
     weight by days in each month
@@ -171,6 +186,39 @@ def weighted_seasonal_mean(var):
     # Return the weighted average
     return (obs_sum/ ones_out).to_dataset(name = var)
 
+def seasonal_avg_timeseries(var):   #if I want to plot trends of a particular season
+    """Calculates timeseries over seasonal averages from timeseries of monthly means
+    The weighted average considers that each month has a different number of days.
+    Using 'QS-DEC' frequency will split the data into consecutive three-month periods, 
+    anchored at December 1st. 
+    I.e. the first value will contain only the avg value over January and February 
+    and the last value only the December monthly averaged value
+    
+    Parameters
+    ----------
+    ds : xarray.DataArray i.e.  ds[var]
+        
+    Returns
+    -------
+    ds_out: xarray.DataSet with 4 timeseries (one for each season DJF, MAM, JJA, SON)
+            note that if you want to include the output in an other dataset, e.g. dr,
+            you should use xr.merge(), e.g.
+            dr = xr.merge([dr, seasonal_avg_timeseries(dr[var], var)])
+    """
+    
+    fileset=open_file(var)
+    ds = xr.open_mfdataset(fileset, combine='by_coords')
+    ds= get_polar_region(ds)
+   
+    month_length = ds.time.dt.days_in_month
+    sesavg = (ds * month_length).resample(time="QS-DEC").sum() / month_length.where(ds.notnull()).resample(time="QS-DEC").sum()
+    
+    djf=sesavg.isel(time=slice(0,None,4))
+    mam=sesavg.isel(time=slice(1,None,4))
+    jja=sesavg.isel(time=slice(2,None,4))
+    son=sesavg.isel(time=slice(3,None,4))
+    
+    return [djf,mam,jja,son]
 
 def anomaly (var):
     
@@ -178,26 +226,9 @@ def anomaly (var):
     #anaomaly is calculated as follows:
          #climatology is calculated usng data from 1950 to 1979
          #Present day trend is calculated for data from 1980 to 2014
-    s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
-                       secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
-
-
-    if var == 'chlos':
-        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='dmsos':
-        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='emidms':
-        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'siconc':
-        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'tos':
-        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-        
-    remote_files = s3.glob(file_dir)
-
-    fileset = [s3.open(file) for file in remote_files[10:]]
-
+    fileset=open_file(var)
     da = xr.open_mfdataset(fileset, combine='by_coords')
+    ds= get_polar_region(da)
     weight= weighted_temporal_mean(da,var)
     
     aa=weight#.groupby("time.year").sum(dim='time')
