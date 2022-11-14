@@ -71,7 +71,7 @@ def get_bucket_data(variable='chlos', time_res='monthly', model='NorESM2-LM', ex
         return dS
 
 
-def get_areacello(model='NorESM2-LM'):
+def get_areacello(model='NorESM2-LM', suppress_feedback=False):
     '''
         Downloads or reads ocean gridcell area data for the desired model
     Args:
@@ -81,9 +81,11 @@ def get_areacello(model='NorESM2-LM'):
     '''
     try:
         areacello = consistent_naming(xr.open_dataset(f'areacello_{model}.nc'))
-        print('Found local areacello NetCDF')
+        if not suppress_feedback:
+            print('Found local areacello NetCDF')
     except:
-        print('Areacello not stored locally. Getting from cloud...')
+        if not suppress_feedback:
+            print('Areacello not stored locally. Getting from cloud...')
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
@@ -162,6 +164,23 @@ def clip_to_months(_ds, start_month, stop_month):
     '''
     return _ds.where(_ds.time.dt.month.isin([i for i in range(start_month, stop_month + 1)]))
 
+def monthly_mean(da, month_number, model, suppress_feedback=True):
+    return regional_average(da.resample(time="M").mean().groupby('time.month')[month_number], model=model, suppress_feedback=suppress_feedback)
+
+def to_datetime_index(_da):
+    '''
+        Converts DataArray time index from cftime to datetime
+    Args:
+        _da        [obj]  : xarray.DataArray object with input data
+    Returns:
+        _da        [obj]  : xarray.DataArray object with converted time index
+    '''
+    try:
+        _da['time'] = _da.time.to_dataframe().index.to_datetimeindex()
+    except AttributeError:
+        print('Time index already converted to datetime')
+    return _da
+
 def shift_longitude(_ds):
     '''
         Transfer longitude from 0-360 degrees standard to -180-180 degrees standard
@@ -177,7 +196,7 @@ def shift_longitude(_ds):
         shifted.coords['lon'] = (shifted['lon'] + 180) % 360 - 180
     return shifted
     
-def regional_average(data, model='NorESM2-LM', clip_coords=[20, 60, 70, 90]):
+def regional_average(data, model='NorESM2-LM', clip_coords=[20, 60, 75, 80], std=False, suppress_feedback=False):
     '''
         Compute the weighted average across a spatial region
     Args:
@@ -187,11 +206,16 @@ def regional_average(data, model='NorESM2-LM', clip_coords=[20, 60, 70, 90]):
     Returns:
         mean        [DataSet]   : Xarray.DataSet or DataArray, with 2 less dimensions than input
     '''
-    area = clip_to_region(get_areacello(model), *clip_coords).squeeze()
+    area = clip_to_region(get_areacello(model, suppress_feedback=suppress_feedback), *clip_coords).squeeze()
     mean = (data*area).sum(dim=('i','j'))/area.sum(dim=('i','j'))
-    return mean
+    if std:
+        data_w = data.weighted(area.fillna(0))
+        std = data_w.std()
+        return mean, std
+    else:
+        return mean
 
-def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
+def time_anomaly(_ds, first_start, first_stop, last_start, last_stop, relative=False):
     '''
         Compute the anomaly between two specified periods
     Args:
@@ -203,7 +227,9 @@ def time_anomaly(_ds, first_start, first_stop, last_start, last_stop):
     Returns:
         anomaly     [DataSet]  : Xarray.DataSet or DataArray with the anomaly
     '''
-    anomaly = _ds.isel(time=slice(last_start, last_stop)).mean(dim='time') - _ds.isel(time=slice(first_start, first_stop)).mean(dim='time')
+    anomaly = _ds.isel(time=slice(last_start, last_stop)).mean(dim='time', keep_attrs=True) - _ds.isel(time=slice(first_start, first_stop)).mean(dim='time', keep_attrs=True)
+    if relative:
+        anomaly = 100 * anomaly / _ds.isel(time=slice(first_start, first_stop)).mean(dim='time', keep_attrs=True)
     return anomaly
 
 
@@ -217,7 +243,7 @@ def find_peak_dates(_da):
     '''
     _dat = _da.copy()
     startyear, stopyear = _dat.isel(time=0).time.dt.year.values, _dat.isel(time=-1).time.dt.year.values
-    _dat['time']  = _dat.time.to_dataframe().index.to_datetimeindex()
+    #_dat['time']  = _dat.time.to_dataframe().index.to_datetimeindex()
     _dat_grouped = _dat.groupby('time.year')
     _ds_dates = [_dat_grouped[year].idxmax(dim='time').values for year in _dat_grouped.groups.keys()]
     shape = np.shape(_ds_dates)
@@ -240,7 +266,7 @@ def find_peak_dates2(_da):
         df        [DataFrame] : Pandas.DataFrame containing doy of the peaks each year  
     '''
     _dat = _da.copy()
-    _dat['time']  = _dat.time.to_dataframe().index.to_datetimeindex()
+    #_dat['time']  = _dat.time.to_dataframe().index.to_datetimeindex()
     _dat = _dat.groupby('time.year')
     _ds_dates = [_dat[year].idxmax(dim='time').values[0] for year in _dat.groups.keys()]
     df = xr.DataArray(_ds_dates).to_dataframe('date')
@@ -248,35 +274,67 @@ def find_peak_dates2(_da):
     df['year'] = pd.to_datetime(df['date']).dt.year
     return df
 
-def regression(data, x, y, summary=False):
+def find_first_dates(_da, threshold, over=False, time_cutoff=260):
+    '''
+        Compute the first date each year where values exceed given threshold
+    Args:
+        _da         [DataArray]   : Xarray.DataArray of variable data
+        threshold   [float]       : Threshold to exceed
+        over        [bool]        : Exceedance or non-exceedance, default is False
+        time_cutoff [int]         : Number of days to use for calculation. Default is 260 (ice minimum)
+    Returns:
+        _dates      [DataArray]   : Xarray.DataArray containing doy of the peaks each year  
+    '''
+    data = _da.copy()
+    startyear, stopyear = data.isel(time=0).time.dt.year.values, data.isel(time=-1).time.dt.year.values
+    data_grouped = data.groupby('time.year')
+    
+    if over:
+        _dates = [data_grouped[year]
+                  .isel(time=slice(0, time_cutoff))
+                  .where(data_grouped[year] > threshold)
+                  .idxmin(dim='time') for year in data_grouped.groups.keys()]
+    else:
+        _dates = [data_grouped[year]
+                  .isel(time=slice(0, time_cutoff))
+                  .where(data_grouped[year] < threshold)
+                  .idxmax(dim='time') for year in data_grouped.groups.keys()]
+        
+    _dates = xr.concat(_dates, dim='time') # Concat all years to DataArray
+    _dates = _dates.dt.dayofyear           # Convert to dayofyear
+    _dates['time'] = np.arange(startyear, stopyear + 1)
+    return _dates
+
+
+def regression(_da1, _da2):
     '''
         Computes the Ordinary Least Squares regression for the input DataFrame
     Args:
-        data     [DataFrame]  : Pandas.DataFrame wiht columns corresponding to x & y
-        x        [str]        : Name of the column in 'data' to use as x-values
-        y        [str]        : Name of the column in 'data' to use as y-values
-        summary  [bool]       : Return the summary of the OLS computation, default is False
+        _da1     [DataArray]  : xarray.DataArray to use for x-values
+        _da2     [DataArray]  : xarray.DataArray to use for y-values
     Returns:
-        a        [float]      : Slope of the computed regression line
-        b        [float]      : Intercept of the computed regression line
-        summary  [str]        : If 'summary' is True, return a summary for the OLS
+        reg      [obj]      : statsmodels.api.ols results object of the computed regression
     '''
-    reg = sm.ols(formula=f'{y} ~ {x}', data=data).fit()
-    #print(reg.summary)
-    b, a = reg.params
-    if summary == True:
-        summary = reg.summary()
-        return a, b, summary
-    else:
-        return a, b
+    try:
+        df = pd.DataFrame([_da1.squeeze().values, _da2.squeeze().values]).T
+    except:
+        df = pd.DataFrame([_da1, _da2]).T
+    df.columns = ['x', 'y']
+    reg = sm.ols(formula=f'y ~ x', data=df).fit()
+    return reg
 
-def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM', ax=None, return_ax=False, reg_summary=False, color='#3C5C1B', anomaly=True):
+def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM', reg_results=False, ax=None, return_ax=False, color='#3C5C1B', anomaly=True, std=None):
     '''
         Create a scatter plot of the peak dates.
     Args:
         peaks         [DataFrame]  : Pandas.DataFrame object resulting from find_peak_dates()
         last_n_years  [int]        : Number of years to plot for, counting from last. Default is 30.
         source        [str]        : Name of the data source to use for plot title
+        ax            [obj]        : Matplotlib.pyplot.axes object
+        return_ax     [bool]       : Whether to return the produced axes object or not
+        reg_results   [bool]       : Whether to return regression summary or not
+        color         [str]        : Color to use for plotting
+        anomaly       [bool]       : Whether to plot the anomaly or actual data
     '''
     if ax is None:
         fig, ax = plt.subplots(figsize=(12,4))
@@ -287,50 +345,76 @@ def scatter_dates(peaks, last_n_years=30, source='NorESM2-LM', ax=None, return_a
     else:
         ylabel = 'Day of Year'
         to_plot = peaks
-
-    ax.scatter(to_plot.time[-last_n_years:], to_plot.values[-last_n_years:], color=color, alpha=0.7, s=3)
     
-    _df = pd.DataFrame({'doy_anomaly': to_plot, 'year': to_plot.time})
+    
+    ax.scatter(to_plot.time[-last_n_years:], to_plot.values[-last_n_years:], color=color, alpha=0.7, s=3, label='Peak date')
+    
+    #_df = pd.DataFrame({'doy_anomaly': to_plot, 'year': to_plot.time})
     
     # Do regression
-    if reg_summary:
-        a, b, summary = regression(_df[-last_n_years:], 'year', 'doy_anomaly', summary=True)
-    else:
-        a, b = regression(_df[-last_n_years:], 'year', 'doy_anomaly')
+    #reg = regression(_df[-last_n_years:], 'year', 'doy_anomaly')
+    reg = regression(to_plot.time[-last_n_years:].values, to_plot.values[-last_n_years:])
+    b, a = reg.params
         
-    ax.plot(_df['year'][-last_n_years:], a * _df['year'][-last_n_years:] + b, 
-            label=f'Trend: {round(a, 3)} d/y', linestyle='--', color=color)
+    ax.plot(to_plot.time[-last_n_years:].values, a * to_plot.time[-last_n_years:].values + b, 
+            label='Trend', linestyle='--', color=color)
     
     #Rolling mean
     mean5 = to_plot.rolling(time=5, center=True, min_periods=3).mean()
     mean10 = to_plot.rolling(time=10, center=True, min_periods=7).mean()
-    ax.plot(_df['year'][-last_n_years:],  mean5.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
-    ax.plot(_df['year'][-last_n_years:],  mean10.values[-last_n_years:], label=f'10-year mean', color=color, linewidth=3)
-    
+    ax.plot(mean5.time[-last_n_years:],  mean5.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
+    ax.plot(mean10.time[-last_n_years:],  mean10.values[-last_n_years:], label=f'10-year mean', color=color, linewidth=3)
+
     #Variance
-    std10 = to_plot.rolling(time=10, center=True, min_periods=7).std()
+    if std is None: # If not passed, use standard deviation in 10-year period instead
+        std = to_plot.rolling(time=10, center=True, min_periods=7).std()
+    else:
+        std = std.rolling(time=5, center=True, min_periods=3).mean()
     
-    ax.fill_between(_df['year'][-last_n_years:],  
-                    mean10.values[-last_n_years:] - std10.values[-last_n_years:], 
-                    mean10.values[-last_n_years:] + std10.values[-last_n_years:], 
+    ax.fill_between(to_plot.time[-last_n_years:].values,  
+                    mean5.values[-last_n_years:] - std.values[-last_n_years:], 
+                    mean5.values[-last_n_years:] + std.values[-last_n_years:], 
                     label=f'Std', color=color, linewidth=1, alpha=0.3)
     #ax.plot(_df['year'][-last_n_years:],  min10.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
     #ax.plot(_df['year'][-last_n_years:],  max10.values[-last_n_years:], label=f'5-year mean', color=color, linewidth=1)
     
     ax.grid()
-    ax.set_title(f'Barents sea: Peak phytoplankton blooming ({source})')
-    ax.set_xlabel('Year')
-    ax.set_ylabel(f'Peak chlorophyll date [{ylabel}]')
-    ax.legend(loc='upper right')
-    if return_ax or reg_summary:
+    ax.set_xlim(mean5.time[-last_n_years:].min(), mean5.time[-last_n_years:].max())
+    #ax.set_title(f'Northern Barents: Peak phytoplankton blooming ({source})')
+    #ax.set_xlabel('Year')
+    #ax.set_ylabel(f'Peak chlorophyll date [{ylabel}]')
+    if return_ax or reg_results:
         to_return = []
         if return_ax:
             to_return.append(fig, ax)
-        if reg_summary:
-            to_return.append(summary)
+        if reg_results:
+            to_return.append(reg)
             return to_return
         
-def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60, nrows=1, ncols=1):
+def scatter_dates_layout(regCesm, regNoresm, fig, axs, title='Northern Barents: Peak phytoplankton bloom', 
+                        ylabel='Peak chlorophyll date [Day of Year]', 
+                        figname=''):
+    fig.text(0.04, 0.5, ylabel, va='center', rotation='vertical', fontsize=13)
+    axs[0].set_title(title, fontsize=18, pad=10)
+
+    props = dict(boxstyle='round', facecolor='white', alpha=0.5)
+    axs[0].text(0.93, 0.88, 'CESM2', transform=axs[0].transAxes, fontsize=11,
+            verticalalignment='top', bbox=props)
+    axs[1].text(0.92, 0.88, 'NorESM2', transform=axs[1].transAxes, fontsize=11,
+            verticalalignment='top', bbox=props)
+
+    axs[0].text(0.02, 0.90, 'Slope: ' + str({round(regCesm[0].params[1], 2)}) + ' d y$^{-1}$', transform=axs[0].transAxes, fontsize=11,
+            verticalalignment='top', bbox=props)
+    axs[1].text(0.02, 0.90, 'Slope: ' + str({round(regNoresm[0].params[1], 2)}) + ' d y$^{-1}$', transform=axs[1].transAxes, fontsize=11,
+            verticalalignment='top', bbox=props)
+
+    axs[1].set_xlabel('Year', fontsize=13)
+    axs[0].legend(bbox_to_anchor=(0.82, -0.03), ncol=5)
+    if figname != '':
+        plt.savefig(f'plots/{figname}.png')
+    plt.subplots_adjust(left=0.1, bottom=0.1, top=0.95, right=0.99, wspace=0.30, hspace=0.3)
+        
+def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60, nrows=1, ncols=1, figsize=(7, 5)):
     '''
         Create a cartopy map instance for a specific region.
     Args:
@@ -342,9 +426,10 @@ def barentsMap(minlat=70, maxlat=80, minlon=20, maxlon=60, nrows=1, ncols=1):
         fig        [Figure] : Matplotlib.pyplot.Figure instance
         map        [Axes]   : Matplotlib.pyplot.Axes instance with given cartopy projection
     '''
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=[7,5], projection=ccrs.NorthPolarStereo(central_longitude=40))
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize,
+                            subplot_kw={'projection': ccrs.NorthPolarStereo(central_longitude=40)})
     try:
-        for ax in axs:
+        for ax in axs.flatten():
             ax.coastlines(); ax.gridlines(draw_labels=True)
             ax.set_extent([minlon, maxlon, minlat, maxlat], crs=ccrs.PlateCarree())
     except:
@@ -410,6 +495,40 @@ def slider_map(_da, start, stop, freq='M', name='ESACCI', model=False, color='Yl
                     layout={'width': '800px'}
                 )
     interact(plot_map, date=date_slider)
+    
+def anomaly_plot(_da1, _da2, title, cb_label='Difference [\%]', cmap='Greens', 
+                 levels=np.linspace(0, 50, 11), extend='both', savefig=None):
+    
+    fig, axs = barentsMap(minlat=74, ncols=2, figsize=(12,5))
+    pCesm = axs[0].contourf(_da1.lon,
+                    _da1.lat,
+                    _da1.values,
+                    transform=ccrs.PlateCarree(),
+                    levels=levels,
+                    extend=extend,
+                    cmap=plt.get_cmap(cmap))
+                    #norm=norm)
+    pNoresm = axs[1].contourf(_da2.lon,
+                            _da2.lat,
+                            _da2.values,
+                            transform=ccrs.PlateCarree(),
+                            levels=levels,
+                            extend=extend,
+                            cmap=plt.get_cmap(cmap))#,
+                            #norm=norm)
+
+    cbar_ax = fig.add_axes([0.25, 0.15, 0.5, 0.05])
+    cbar = fig.colorbar(pCesm, cax=cbar_ax, orientation='horizontal')
+    cbar.set_label(label=cb_label,size=13,weight='bold')
+
+    axs[0].set_title('CESM2', fontsize=13)
+    axs[1].set_title('NorESM2', fontsize=13)
+    fig.suptitle(title, fontsize=18, y=0.87)
+    if savefig is not None:
+        plt.savefig('plots/' + savefig + '.png')
+    plt.show()
+
+    
 
 def consistent_naming(ds):
     """
