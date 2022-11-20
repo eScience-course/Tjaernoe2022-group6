@@ -1,5 +1,4 @@
 import xarray as xr
-xr.set_options(display_style='html')
 import intake
 import cftime
 import numpy as np
@@ -11,74 +10,115 @@ import glob
 
 #......use 'volcello' for DMS and clos data......##
 
-def open_file(var):
+def open_file(model,var):
     
     s3 = s3fs.S3FileSystem(key="K1CQ7M1DMTLUFK182APD", 
                        secret="3JuZAQm5I03jtpijCpHOdkAsJDNLNfZxBpM15Pi0", client_kwargs=dict(endpoint_url="https://rgw.met.no"))
 
-
-    if var == 'chlos':
-        file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='dmsos':
-        file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var=='emidms':
-        file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'siconc':
-        file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
-    if var == 'tos':
-        file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+    if model=='NorESM2-LM':
+        if var == 'chlos':
+            file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        elif var=='dmsos':
+            file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        elif var=='emidms':
+            file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        elif var == 'siconc':
+            file_dir='s3://escience2022/Ada/monthly/siconc_SImon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        elif var == 'tos':
+            file_dir='s3://escience2022/Ada/monthly/tos_Omon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        
+    if (model=='CNRM-ESM2-1'):
+        
+        if var == 'chlos':
+            file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_CNRM-ESM2-1_historical_r2i1p1f2_gn*.nc'
+        elif var=='dmsos':
+            file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_CNRM-ESM2-1_historical_r2i1p1f2_gn*.nc'
+        elif var=='emidms':
+            file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn_*.nc'
+        elif var == 'siconc':
+            file_dir='s3://escience2022/Ada/monthly/siconc_SImon_CNRM-ESM2-1_historical_r2i1p1f2_gn*.nc'
+        elif var == 'tos':
+            file_dir='s3://escience2022/Ada/monthly/tos_Omon_CNRM-ESM2-1_historical_r2i1p1f2_gn*.nc'
+        
+    
+    if (model=='CESM2'):
+        
+        if var == 'chlos':
+            file_dir ='s3://escience2022/Ada/monthly/chlos_Omon_CESM2_historical_r4i1p1f1_gn*.nc'
+        elif var=='dmsos':
+            file_dir ='s3://escience2022/Ada/monthly/dmsos_Omon_NorESM2-LM_historical_r1i1p1f1_gn*.nc'
+        elif var=='emidms':
+            file_dir ='s3://escience2022/Ada/monthly/emidms_AERmon_NorESM2-LM_historical_r1i1p1f1_gn*.nc'
+        elif var == 'siconc':
+            file_dir='s3://escience2022/Ada/monthly/siconc_SImon_CESM2_historical_r4i1p1f1_gn*.nc'
+        elif var == 'tos':
+            file_dir='s3://escience2022/Ada/monthly/tos_Omon_CESM2_historical_r4i1p1f1_gn*.nc'
         
     remote_files = s3.glob(file_dir)
-    fileset = [s3.open(file) for file in remote_files[10:]]
-    
+    fileset = [s3.open(file) for file in remote_files]
     return fileset
 
-def get_areacello(model,min_lat,max_lat,min_lon,max_lon,area):
+def get_areacello(model,region):
+    
+    min_lat= region[0]
+    max_lat= region[1]
+    min_lon= region[2]
+    max_lon= region[3] 
     
     if (model=='NorESM2-LM'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f1'])
+                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
-        areacello = areacello.squeeze()
+        areacello = areacello.squeeze()                     
         
-        BSarea = areacello.get(area).where((areacello.latitude>=min_lat) & (areacello.latitude<=max_lat) 
+        BSarea = areacello.areacello.where((areacello.latitude>=min_lat) & (areacello.latitude<=max_lat) 
                                        & (areacello.longitude <= max_lon)  & (areacello.longitude >= min_lon))    
     if (model=='CNRM-ESM2-1'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f2'])
+                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r2i1p1f2'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
         areacello = areacello.squeeze()
         
-        BSarea = areacello.get(area).where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
+        BSarea = areacello.areacello.where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
                                        & (areacello.lon <= max_lon)  & (areacello.lon >= min_lon))
     if (model=='CESM2'):
         cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
         col = intake.open_esm_datastore(cat_url)
         cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
-                         table_id=['Ofx'], variable_id=[area], member_id=['r1i1p1f1'])
+                         table_id=['Ofx'], variable_id=['areacello'], member_id=['r4i1p1f1'])
         ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     
         areacello = ds_dict[list(ds_dict.keys())[0]]
         areacello = areacello.squeeze()
         
-        BSarea = areacello.get(area).where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
+        BSarea = areacello.areacello.where((areacello.lat>=min_lat) & (areacello.lat<=max_lat) 
                                        & (areacello.lon <= max_lon)  & (areacello.lon >= min_lon))
     return BSarea
 
-def get_polar_region(ds):
+def get_polar_region(ds,model):  #get an xarray only for the polar region
     
     cat_url = "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
     col = intake.open_esm_datastore(cat_url)
-    cat = col.search(source_id=['NorESM2-LM'], activity_id = ['CMIP'], experiment_id=['piControl'], 
+    
+    if (model=='NorESM2-LM'):
+        cat = col.search(source_id=['NorESM2-LM'], activity_id = ['CMIP'], experiment_id=['piControl'], 
                      table_id=['Ofx'], variable_id=['areacello'], member_id=['r1i1p1f1'])
+    if (model=='CNRM-ESM2-1'):
+        cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
+                         table_id=['Ofx'], variable_id=[area], member_id=['r2i1p1f2'])
+        
+    if (model=='CESM2'):
+        cat = col.search(source_id=[model], activity_id = ['CMIP'], experiment_id=['piControl'], 
+                         table_id=['Ofx'], variable_id=[area], member_id=['r4i1p1f1'])
+    
     ds_dict = cat.to_dataset_dict(zarr_kwargs={'use_cftime':True})
     areacello = ds_dict[list(ds_dict.keys())[0]]
     areacello = areacello.squeeze()
@@ -88,28 +128,39 @@ def get_polar_region(ds):
     return da
     
 
-def regional_average(inp):
-                                                 
-    files_dir= inp[0]
-    model= inp[1]
-    min_lat= inp[2]
-    max_lat= inp[3]
-    min_lon= inp[4]
-    max_lon= inp[5]   
-    var= inp[6]
-    cel_type=  inp[7]                                                 
-    area=cel_type
+def regional_average(model,var):
     
-    cell_area=get_areacello(model,min_lat,max_lat,min_lon,max_lon,area)  #get cell area
+    #calculate the regional average for each year
+    min_lat=60
+    max_lat=90
+    min_lon=0
+    max_lon=360
     
-    fileset=open_file(var)                                               #get a list of files to open
+    region=[min_lat,max_lat,min_lon,max_lon]  #region defined                                          
+    
+    cell_area=get_areacello(model,region)  #get cell area
+    
+    fileset=open_file(model,var)                                               #get a list of files to open
     da = xr.open_mfdataset(fileset, combine='by_coords')
-    ds= get_polar_region(da)
+    
+    if var!='siconc':
+        ds= get_polar_region(da,model)
+    else:
+        ds=da
     
     dss=weighted_yearly_mean(ds, var)
     
-    BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
+    if (model=='NorESM2-LM'):
+        BSsst = dss.where((dss.latitude>=min_lat) & (dss.latitude<=max_lat) & 
                       (dss.longitude <= max_lon)  & (dss.longitude >=min_lon))
+    
+    if (model=='CNRM-ESM2-1'):
+        BSsst = dss.where((dss.lat>=min_lat) & (dss.lat<=max_lat) & 
+                      (dss.lon <= max_lon)  & (dss.lon>=min_lon))
+        
+    if (model=='CESM2'):
+        BSsst = dss.where((dss.lat>=min_lat) & (dss.lat<=max_lat) & 
+                      (dss.lon <= max_lon)  & (dss.lon >=min_lon))
     
     if var =='chlos':
        BSsst = (cell_area*10*BSsst).sum(dim=('i','j'))/(cell_area*10).sum(dim=('i','j'))  #check if it is correct?
@@ -131,10 +182,8 @@ def weighted_yearly_mean(ds, var):
 
     # Make sure the weights in each year add up to 1
     np.testing.assert_allclose(wgts.groupby("time.year").sum(xr.ALL_DIMS), 1.0)
-
+     
     # Subset our dataset for our variable
-    ds= get_polar_region(ds)
-    
     obs = ds[var]
 
     # Setup our masking for nan values
@@ -151,12 +200,7 @@ def weighted_yearly_mean(ds, var):
     return obs_sum / ones_out
 
 
-def weighted_seasonal_mean(var):  #to calculate mean of a particular season. The output is the mean of each season separately over a period of time.
-    
-    fileset=open_file(var)
-
-    ds = xr.open_mfdataset(fileset, combine='by_coords')
-    ds= get_polar_region(ds)
+def weighted_seasonal_mean(ds,var):  #to calculate mean of a particular season. The output is the mean of each season separately over a period of time.
     
     """
     weight by days in each month
@@ -207,8 +251,11 @@ def seasonal_avg_timeseries(var):   #if I want to plot trends of a particular se
     """
     
     fileset=open_file(var)
-    ds = xr.open_mfdataset(fileset, combine='by_coords')
-    ds= get_polar_region(ds)
+    da = xr.open_mfdataset(fileset, combine='by_coords')
+    if var!= 'siconc':
+        ds=get_polar_region(da)
+    else:
+        ds=da
    
     month_length = ds.time.dt.days_in_month
     sesavg = (ds * month_length).resample(time="QS-DEC").sum() / month_length.where(ds.notnull()).resample(time="QS-DEC").sum()
@@ -220,6 +267,22 @@ def seasonal_avg_timeseries(var):   #if I want to plot trends of a particular se
     
     return [djf,mam,jja,son]
 
+def anomaly_seasonal(var):
+    
+    fileset = open_file(var)
+
+    ds = xr.open_mfdataset(fileset, combine='by_coords')
+    
+    now=ds.sel(time=slice("1980-01-01", "2014-10-31"))
+    
+    ref_year=ds.sel(time=slice("1950-01-01", "1979-10-31"))
+    
+    weighted_now= weighted_seasonal_mean(now,var)
+    weighted_ref= weighted_seasonal_mean(ref_year,var)
+    
+    return [weighted_now,weighted_ref]
+
+
 def anomaly (var):
     
     ## Put the variable name as stored in the NorESM data. This function will output the anomaly and anomaly/climatology in a list.
@@ -228,8 +291,13 @@ def anomaly (var):
          #Present day trend is calculated for data from 1980 to 2014
     fileset=open_file(var)
     da = xr.open_mfdataset(fileset, combine='by_coords')
-    ds= get_polar_region(da)
-    weight= weighted_temporal_mean(da,var)
+    
+    if var!='siconc':
+        ds= get_polar_region(da)
+    else:
+        ds=da
+   
+    weight= weighted_temporal_mean(ds,var)
     
     aa=weight#.groupby("time.year").sum(dim='time')
 
